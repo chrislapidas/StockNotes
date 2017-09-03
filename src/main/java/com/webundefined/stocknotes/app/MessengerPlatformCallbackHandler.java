@@ -10,31 +10,14 @@ import com.github.messenger4j.exceptions.MessengerApiException;
 import com.github.messenger4j.exceptions.MessengerIOException;
 import com.github.messenger4j.exceptions.MessengerVerificationException;
 import com.github.messenger4j.receive.MessengerReceiveClient;
-import com.github.messenger4j.receive.events.AccountLinkingEvent.AccountLinkingStatus;
-import com.github.messenger4j.receive.events.AttachmentMessageEvent.Attachment;
-import com.github.messenger4j.receive.events.AttachmentMessageEvent.AttachmentType;
-import com.github.messenger4j.receive.events.AttachmentMessageEvent.Payload;
-import com.github.messenger4j.receive.handlers.AccountLinkingEventHandler;
-import com.github.messenger4j.receive.handlers.AttachmentMessageEventHandler;
-import com.github.messenger4j.receive.handlers.EchoMessageEventHandler;
 import com.github.messenger4j.receive.handlers.FallbackEventHandler;
-import com.github.messenger4j.receive.handlers.MessageDeliveredEventHandler;
-import com.github.messenger4j.receive.handlers.MessageReadEventHandler;
-import com.github.messenger4j.receive.handlers.OptInEventHandler;
-import com.github.messenger4j.receive.handlers.PostbackEventHandler;
-import com.github.messenger4j.receive.handlers.QuickReplyMessageEventHandler;
 import com.github.messenger4j.receive.handlers.TextMessageEventHandler;
 import com.github.messenger4j.send.MessengerSendClient;
 import com.github.messenger4j.send.NotificationType;
-import com.github.messenger4j.send.QuickReply;
 import com.github.messenger4j.send.Recipient;
-import com.github.messenger4j.send.SenderAction;
-import com.github.messenger4j.send.buttons.Button;
-import com.github.messenger4j.send.templates.ButtonTemplate;
-import com.github.messenger4j.send.templates.GenericTemplate;
-import com.github.messenger4j.send.templates.ReceiptTemplate;
+
+import java.io.IOException;
 import java.util.Date;
-import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +30,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import yahoofinance.Stock;
+import yahoofinance.YahooFinance;
+import yahoofinance.quotes.stock.StockQuote;
 
 /**
  * This is the main class for inbound and outbound communication with the Facebook Messenger Platform.
@@ -58,6 +44,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/callback")
 public class MessengerPlatformCallbackHandler {
+
 
     private static final String RESOURCE_URL =
             "https://raw.githubusercontent.com/fbsamples/messenger-platform-samples/master/node/public";
@@ -83,14 +70,6 @@ public class MessengerPlatformCallbackHandler {
         logger.debug("Initializing MessengerReceiveClient - appSecret: {} | verifyToken: {}", appSecret, verifyToken);
         this.receiveClient = MessengerPlatform.newReceiveClientBuilder(appSecret, verifyToken)
                 .onTextMessageEvent(newTextMessageEventHandler())
-                .onAttachmentMessageEvent(newAttachmentMessageEventHandler())
-                .onQuickReplyMessageEvent(newQuickReplyMessageEventHandler())
-                .onPostbackEvent(newPostbackEventHandler())
-                .onAccountLinkingEvent(newAccountLinkingEventHandler())
-                .onOptInEvent(newOptInEventHandler())
-                .onEchoMessageEvent(newEchoMessageEventHandler())
-                .onMessageDeliveredEvent(newMessageDeliveredEventHandler())
-                .onMessageReadEvent(newMessageReadEventHandler())
                 .fallbackEventHandler(newFallbackEventHandler())
                 .build();
         this.sendClient = sendClient;
@@ -147,66 +126,29 @@ public class MessengerPlatformCallbackHandler {
             logger.info("Received message '{}' with text '{}' from user '{}' at '{}'",
                     messageId, messageText, senderId, timestamp);
 
+            String lowerCaseMessageText = messageText.toLowerCase();
             try {
-                switch (messageText.toLowerCase()) {
-                    case "image":
-                        sendImageMessage(senderId);
-                        break;
-
-                    case "gif":
-                        sendGifMessage(senderId);
-                        break;
-
-                    case "audio":
-                        sendAudioMessage(senderId);
-                        break;
-
-                    case "video":
-                        sendVideoMessage(senderId);
-                        break;
-
-                    case "file":
-                        sendFileMessage(senderId);
-                        break;
-
-                    case "button":
-                        sendButtonMessage(senderId);
-                        break;
-
-                    case "generic":
-                        sendGenericMessage(senderId);
-                        break;
-
-                    case "receipt":
-                        sendReceiptMessage(senderId);
-                        break;
-
-                    case "quick reply":
-                        sendQuickReply(senderId);
-                        break;
-
-                    case "read receipt":
-                        sendReadReceipt(senderId);
-                        break;
-
-                    case "typing on":
-                        sendTypingOn(senderId);
-                        break;
-
-                    case "typing off":
-                        sendTypingOff(senderId);
-                        break;
-
-                    /*
-                    case "account linking":
-                        sendAccountLinking(senderId);
-                        break;
-                    */
-
-                    default:
-                        sendTextMessage(senderId, messageText);
+                if (lowerCaseMessageText.startsWith("quote ")){
+                    sendQuote(senderId, lowerCaseMessageText);
                 }
-            } catch (MessengerApiException | MessengerIOException e) {
+                else {
+                    switch (lowerCaseMessageText) {
+
+
+                        case "image":
+                            sendImageMessage(senderId);
+                            break;
+
+                        case "gif":
+                            sendGifMessage(senderId);
+                            break;
+
+                        default:
+                            sendTextMessage(senderId, messageText);
+                    }
+                }
+
+            } catch (MessengerApiException | IOException | MessengerIOException e) {
                 handleSendException(e);
             }
         };
@@ -220,254 +162,20 @@ public class MessengerPlatformCallbackHandler {
         this.sendClient.sendImageAttachment(recipientId, "https://media.giphy.com/media/11sBLVxNs7v6WA/giphy.gif");
     }
 
-    private void sendAudioMessage(String recipientId) throws MessengerApiException, MessengerIOException {
-        this.sendClient.sendAudioAttachment(recipientId, RESOURCE_URL + "/assets/sample.mp3");
-    }
+    private void sendQuote(String recipientId, String lowerCaseTickerSymbol) throws MessengerApiException, MessengerIOException, IOException {
+        Stock stock = YahooFinance.get(lowerCaseTickerSymbol);
+        String sendMessage;
+        if (!stock.isValid()){
+            sendMessage = "Error: Ticker symbol is not valid.";
+        }
+        else {
+            StockQuote stockQuote = stock.getQuote();
+            sendMessage = lowerCaseTickerSymbol.toUpperCase() + ": " + stockQuote.getPrice() + " (" +
+                    stockQuote.getChangeInPercent() + "%) " +
+                    stockQuote.getLastTradeTime().getTime().toString();
+        }
 
-    private void sendVideoMessage(String recipientId) throws MessengerApiException, MessengerIOException {
-        this.sendClient.sendVideoAttachment(recipientId, RESOURCE_URL + "/assets/allofus480.mov");
-    }
-
-    private void sendFileMessage(String recipientId) throws MessengerApiException, MessengerIOException {
-        this.sendClient.sendFileAttachment(recipientId, RESOURCE_URL + "/assets/test.txt");
-    }
-
-    private void sendButtonMessage(String recipientId) throws MessengerApiException, MessengerIOException {
-        final List<Button> buttons = Button.newListBuilder()
-                .addUrlButton("Open Web URL", "https://www.oculus.com/en-us/rift/").toList()
-                .addPostbackButton("Trigger Postback", "DEVELOPER_DEFINED_PAYLOAD").toList()
-                .addCallButton("Call Phone Number", "+16505551234").toList()
-                .build();
-
-        final ButtonTemplate buttonTemplate = ButtonTemplate.newBuilder("Tap a button", buttons).build();
-        this.sendClient.sendTemplate(recipientId, buttonTemplate);
-    }
-
-    private void sendGenericMessage(String recipientId) throws MessengerApiException, MessengerIOException {
-        final List<Button> riftButtons = Button.newListBuilder()
-                .addUrlButton("Open Web URL", "https://www.oculus.com/en-us/rift/").toList()
-                .addPostbackButton("Call Postback", "Payload for first bubble").toList()
-                .build();
-
-        final List<Button> touchButtons = Button.newListBuilder()
-                .addUrlButton("Open Web URL", "https://www.oculus.com/en-us/touch/").toList()
-                .addPostbackButton("Call Postback", "Payload for second bubble").toList()
-                .build();
-
-
-        final GenericTemplate genericTemplate = GenericTemplate.newBuilder()
-                .addElements()
-                    .addElement("rift")
-                        .subtitle("Next-generation virtual reality")
-                        .itemUrl("https://www.oculus.com/en-us/rift/")
-                        .imageUrl(RESOURCE_URL + "/assets/rift.png")
-                        .buttons(riftButtons)
-                        .toList()
-                    .addElement("touch")
-                        .subtitle("Your Hands, Now in VR")
-                        .itemUrl("https://www.oculus.com/en-us/touch/")
-                        .imageUrl(RESOURCE_URL + "/assets/touch.png")
-                        .buttons(touchButtons)
-                        .toList()
-                    .done()
-                .build();
-
-        this.sendClient.sendTemplate(recipientId, genericTemplate);
-    }
-
-    private void sendReceiptMessage(String recipientId) throws MessengerApiException, MessengerIOException {
-        final String uniqueReceiptId = "order-" + Math.floor(Math.random() * 1000);
-
-        final ReceiptTemplate receiptTemplate = ReceiptTemplate.newBuilder("Peter Chang", uniqueReceiptId, "USD", "Visa 1234")
-                .timestamp(1428444852L)
-                .addElements()
-                    .addElement("Oculus Rift", 599.00f)
-                        .subtitle("Includes: headset, sensor, remote")
-                        .quantity(1)
-                        .currency("USD")
-                        .imageUrl(RESOURCE_URL + "/assets/riftsq.png")
-                        .toList()
-                    .addElement("Samsung Gear VR", 99.99f)
-                        .subtitle("Frost White")
-                        .quantity(1)
-                        .currency("USD")
-                        .imageUrl(RESOURCE_URL + "/assets/gearvrsq.png")
-                        .toList()
-                    .done()
-                .addAddress("1 Hacker Way", "Menlo Park", "94025", "CA", "US").done()
-                .addSummary(626.66f)
-                    .subtotal(698.99f)
-                    .shippingCost(20.00f)
-                    .totalTax(57.67f)
-                    .done()
-                .addAdjustments()
-                    .addAdjustment().name("New Customer Discount").amount(-50f).toList()
-                    .addAdjustment().name("$100 Off Coupon").amount(-100f).toList()
-                    .done()
-                .build();
-
-        this.sendClient.sendTemplate(recipientId, receiptTemplate);
-    }
-
-    private void sendQuickReply(String recipientId) throws MessengerApiException, MessengerIOException {
-        final List<QuickReply> quickReplies = QuickReply.newListBuilder()
-                .addTextQuickReply("Action", "DEVELOPER_DEFINED_PAYLOAD_FOR_PICKING_ACTION").toList()
-                .addTextQuickReply("Comedy", "DEVELOPER_DEFINED_PAYLOAD_FOR_PICKING_COMEDY").toList()
-                .addTextQuickReply("Drama", "DEVELOPER_DEFINED_PAYLOAD_FOR_PICKING_DRAMA").toList()
-                .addLocationQuickReply().toList()
-                .build();
-
-        this.sendClient.sendTextMessage(recipientId, "What's your favorite movie genre?", quickReplies);
-    }
-
-    private void sendReadReceipt(String recipientId) throws MessengerApiException, MessengerIOException {
-        this.sendClient.sendSenderAction(recipientId, SenderAction.MARK_SEEN);
-    }
-
-    private void sendTypingOn(String recipientId) throws MessengerApiException, MessengerIOException {
-        this.sendClient.sendSenderAction(recipientId, SenderAction.TYPING_ON);
-    }
-
-    private void sendTypingOff(String recipientId) throws MessengerApiException, MessengerIOException {
-        this.sendClient.sendSenderAction(recipientId, SenderAction.TYPING_OFF);
-    }
-
-    private void sendAccountLinking(String recipientId) {
-        // supported by messenger4j since 0.7.0
-        // sample implementation coming soon
-    }
-
-    private AttachmentMessageEventHandler newAttachmentMessageEventHandler() {
-        return event -> {
-            logger.debug("Received AttachmentMessageEvent: {}", event);
-
-            final String messageId = event.getMid();
-            final List<Attachment> attachments = event.getAttachments();
-            final String senderId = event.getSender().getId();
-            final Date timestamp = event.getTimestamp();
-
-            logger.info("Received message '{}' with attachments from user '{}' at '{}':",
-                    messageId, senderId, timestamp);
-
-            attachments.forEach(attachment -> {
-                final AttachmentType attachmentType = attachment.getType();
-                final Payload payload = attachment.getPayload();
-
-                String payloadAsString = null;
-                if (payload.isBinaryPayload()) {
-                    payloadAsString = payload.asBinaryPayload().getUrl();
-                }
-                if (payload.isLocationPayload()) {
-                    payloadAsString = payload.asLocationPayload().getCoordinates().toString();
-                }
-
-                logger.info("Attachment of type '{}' with payload '{}'", attachmentType, payloadAsString);
-            });
-
-            sendTextMessage(senderId, "Message with attachment received");
-        };
-    }
-
-    private QuickReplyMessageEventHandler newQuickReplyMessageEventHandler() {
-        return event -> {
-            logger.debug("Received QuickReplyMessageEvent: {}", event);
-
-            final String senderId = event.getSender().getId();
-            final String messageId = event.getMid();
-            final String quickReplyPayload = event.getQuickReply().getPayload();
-
-            logger.info("Received quick reply for message '{}' with payload '{}'", messageId, quickReplyPayload);
-
-            sendTextMessage(senderId, "Quick reply tapped");
-        };
-    }
-
-    private PostbackEventHandler newPostbackEventHandler() {
-        return event -> {
-            logger.debug("Received PostbackEvent: {}", event);
-
-            final String senderId = event.getSender().getId();
-            final String recipientId = event.getRecipient().getId();
-            final String payload = event.getPayload();
-            final Date timestamp = event.getTimestamp();
-
-            logger.info("Received postback for user '{}' and page '{}' with payload '{}' at '{}'",
-                    senderId, recipientId, payload, timestamp);
-
-            sendTextMessage(senderId, "Postback called");
-        };
-    }
-
-    private AccountLinkingEventHandler newAccountLinkingEventHandler() {
-        return event -> {
-            logger.debug("Received AccountLinkingEvent: {}", event);
-
-            final String senderId = event.getSender().getId();
-            final AccountLinkingStatus accountLinkingStatus = event.getStatus();
-            final String authorizationCode = event.getAuthorizationCode();
-
-            logger.info("Received account linking event for user '{}' with status '{}' and auth code '{}'",
-                    senderId, accountLinkingStatus, authorizationCode);
-        };
-    }
-
-    private OptInEventHandler newOptInEventHandler() {
-        return event -> {
-            logger.debug("Received OptInEvent: {}", event);
-
-            final String senderId = event.getSender().getId();
-            final String recipientId = event.getRecipient().getId();
-            final String passThroughParam = event.getRef();
-            final Date timestamp = event.getTimestamp();
-
-            logger.info("Received authentication for user '{}' and page '{}' with pass through param '{}' at '{}'",
-                    senderId, recipientId, passThroughParam, timestamp);
-
-            sendTextMessage(senderId, "Authentication successful");
-        };
-    }
-
-    private EchoMessageEventHandler newEchoMessageEventHandler() {
-        return event -> {
-            logger.debug("Received EchoMessageEvent: {}", event);
-
-            final String messageId = event.getMid();
-            final String recipientId = event.getRecipient().getId();
-            final String senderId = event.getSender().getId();
-            final Date timestamp = event.getTimestamp();
-
-            logger.info("Received echo for message '{}' that has been sent to recipient '{}' by sender '{}' at '{}'",
-                    messageId, recipientId, senderId, timestamp);
-        };
-    }
-
-    private MessageDeliveredEventHandler newMessageDeliveredEventHandler() {
-        return event -> {
-            logger.debug("Received MessageDeliveredEvent: {}", event);
-
-            final List<String> messageIds = event.getMids();
-            final Date watermark = event.getWatermark();
-            final String senderId = event.getSender().getId();
-
-            if (messageIds != null) {
-                messageIds.forEach(messageId -> {
-                    logger.info("Received delivery confirmation for message '{}'", messageId);
-                });
-            }
-
-            logger.info("All messages before '{}' were delivered to user '{}'", watermark, senderId);
-        };
-    }
-
-    private MessageReadEventHandler newMessageReadEventHandler() {
-        return event -> {
-            logger.debug("Received MessageReadEvent: {}", event);
-
-            final Date watermark = event.getWatermark();
-            final String senderId = event.getSender().getId();
-
-            logger.info("All messages before '{}' were read by user '{}'", watermark, senderId);
-        };
+        this.sendClient.sendTextMessage(recipientId, sendMessage);
     }
 
     /**

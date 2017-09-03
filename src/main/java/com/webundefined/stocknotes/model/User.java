@@ -38,7 +38,4 @@ public class User {
             return ("Already not subscribed to " + tickerSymbol);
         }
     }
-
-
-
 }
