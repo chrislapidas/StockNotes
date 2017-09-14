@@ -163,7 +163,7 @@ public class MessengerPlatformCallbackHandler {
     }
 
     private void sendQuote(String recipientId, String lowerCaseTickerSymbol) throws MessengerApiException, MessengerIOException, IOException {
-        Stock stock = YahooFinance.get(lowerCaseTickerSymbol);
+        Stock stock = YahooFinance.get(lowerCaseTickerSymbol.substring(6));
         String sendMessage;
         if (!stock.isValid()){
             sendMessage = "Error: Ticker symbol is not valid.";
